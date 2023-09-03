@@ -62,4 +62,4 @@ if __name__ == '__main__':
     print("此设备的平台："+sys.platform)
     print("此设备的操作系统："+sys_type)
     print("TzGamePanel开源免费，基于GPLv3，项目地址：https://gitee.com/tzdtwsj/TzGamePanel-Daemon")
-    app.run(host=config['host'],port=config['port'])
+    app.run(host=config['host'],port=config['port'],debug=False,threaded=True)
