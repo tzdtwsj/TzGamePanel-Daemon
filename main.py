@@ -4,17 +4,28 @@ import json
 import sys
 import os
 import platform
-import websockets.exceptions
-from websockets.server import serve
+#import websockets.exceptions
+#from websockets.server import serve
+from flask import Flask, request, make_response, abort
+from flask_socketio import SocketIO, emit
+#from flask_cors import *
 import asyncio
 import hashlib
 import time
 import psutil
+#from gevent import pywsgi
+#from geventwebsocket.handler import WebSocketHandler
 
 VERSION = "1.0.0"
 connect_num = 0
 sys_type = ""
 config = {}
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'secret_key'
+socketio = SocketIO(app, cors_allowed_origins='*')
+
+name_space = '/ws'
 
 def info():
     global sys_type,VERSION
@@ -37,47 +48,40 @@ def ws_return(status:int=200,msg:str="OK",data=None):
         "data": data
     })
 
-async def ws_main(ws):
-    global connect_num,config
-    connect_num += 1
-    auth = False
-    print(f"有客户端建立连接，当前连接数：{connect_num}")
-    try:
-        async for message in ws:
-            if auth == False:
-                if message == config['token']:
-                    auth = True
-                    await ws.send("OK")
-                    continue
-                else:
-                    await ws.send("Fail")
-                    break
-            try:
-                data = json.loads(message)
-            except json.decoder.JSONDecodeError:
-                await ws.send(json.dumps({
-                    "status": 500,
-                    "msg": "无法解析JSON",
-                    "data": None
-                }))
-                break
-            if data.get("action") == None:
-                await ws.send(ws_return(400,"缺少参数action"))
-                break
-            elif data.get("action") == "get_info":
-                await ws.send(ws_return(data=info()))
-            elif data.get("action") == "close_connection":
-                break
-            else:
-                await ws.send(ws_return(400,"无效的action"))
-    except websockets.exceptions.ConnectionClosedError:
-        connect_num -= 1
-        print(f"有客户端断开连接，当前连接数：{connect_num}")
-        return
-    connect_num -= 1
-    print(f"有客户端断开连接，当前连接数：{connect_num}")
+@app.errorhandler(404)
+def e_404(e):
+    return """<html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>Powered by TzGamePanel</center>
+</body>
+</html>"""
 
-async def main():
+@app.route("/")
+def daemon_is_ok():
+    return "TzGamePanel Daemon is OK. Time: "+str(int(time.time()))
+
+@app.route("/get_info", methods=["GET"])
+def get_info():
+    token = request.args.get("token")
+    if not token:
+        return json.dumps({'status': 403,'msg': "Permission denied"}), 403
+    if not token == config['token']:
+        return json.dumps({'status': 403,'msg': "Pernission denied"}), 403
+    else:
+        return json.dumps({'status': 200,'msg': "OK",'data':info()}), 200
+
+@socketio.on("connect", namespace=name_space)
+def websocket_connect(ws):
+    print("websocket建立连接")
+
+@socketio.on("my_event", namespace=name_space)
+def websocket_msg(msg):
+    print(msg)
+    emit('test',msg)
+
+def main():
     global sys_type,config
     print("_____     ____                      ____                  _\n|_   _|___/ ___| __ _ _ __ ___   ___|  _ \\ __ _ _ __   ___| |\n  | ||_  / |  _ / _` | '_ ` _ \\ / _ \\ |_) / _` | '_ \\ / _ \\ |\n  | | / /| |_| | (_| | | | | | |  __/  __/ (_| | | | |  __/ |\n  |_|/___|\\____|\\__,_|_| |_| |_|\\___|_|   \\__,_|_| |_|\\___|_|")
     print("___\n|   \\ __ _ ___ _ __  ___ _ _\n| |) / _` / -_) '  \\/ _ \\ ' \\\n|___/\\__,_\\___|_|_|_\\___/_||_|")
@@ -119,15 +123,14 @@ async def main():
     print("此设备的平台："+sys.platform)
     print("此设备的操作系统："+sys_type)
     print("TzGamePanel开源免费，基于GPLv3，项目地址：https://gitee.com/tzdtwsj/TzGamePanel-Daemon")
-    async with serve(ws_main,config['host'],config['port']):
-        print(f"TzGamePanel监听在地址{config['host']}，端口{config['port']}")
-        print("此进程的PID是"+str(os.getpid()))
-        print("退出请按下Ctrl + C")
-        await asyncio.Future()
+    print(f"TzGamePanel监听在地址{config['host']}，端口{config['port']}")
+    print("此进程的PID是"+str(os.getpid()))
+    print("退出请按下Ctrl + C")
+    socketio.run(app,host=config['host'],port=config['port'])
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         print("正在退出")
         sys.exit(0)
