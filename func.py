@@ -39,19 +39,83 @@ def load_cmd_str(cmd:str):
     return tmp_cmd_arr
 
 class start_instance:
-    proc = None
-    status = None
-    stdin = None
-    stdout = None
+    proc = None #进程类
+
+    status = None #进程返回的返回值
+
+    stdin = None #管道
+
+    stdout = None #管道
+
+    stdout2 = None #class将会使用此管道
+
+    instance_id = None #实例id
+
+    start_success = None #是否启动进程成功
+
+    error_msg = "" #如果start_success == False，那么这个变量会有内容
+
     #stderr = None#为了方便，stderr与stdout合并
-    def __init__(self,cmd:list):
+
+    Thread_read_proc_text_to_file = None
+
+    Thread_check_proc_is_running = None
+
+    def __init__(self,cmd:list,cwd:str,instance_id:str):
         self.stdin = os.pipe()#os.pipe返回的是元组，元组的返回的第一个fd是读，第二个fd是写
         self.stdout = os.pipe()
+        self.stdout2 = os.pipe()
         #self.stderr = os.pipe()
-        self.proc = Popen(
-            cmd,
-            shell = False,
-            stdin = self.stdin[0],
-            stdout = self.stdout[1],
-            stderr = self.stderr[1]
-        )
+        self.instance_id = instance_id
+        try:
+            self.proc = Popen(
+                args = cmd,#命令参数
+                shell = False,#是否由shell带动此进程
+                stdin = self.stdin[0],#标准输入
+                stdout = self.stdout[1],#标准输出
+                stderr = self.stdout[1],#标准错误输出
+                cwd = cwd
+            )
+        except Exception as e:
+            self.start_success = False
+            self.error_msg = e.__str__() + " 在class " + str(type(e)) + " 中"
+        else:
+            self.start_success = True
+            def read_proc_text_to_file(file,fd,fd2,self):
+                while True:
+                    try:
+                        text = os.read(fd,256000)
+                        with open(file,"ab") as f:
+                            f.write(text)
+                        os.write(fd2,text)
+                    except Exception:
+                        break
+                
+                def check_proc_is_running(self):
+                    while True:
+                        if self.proc.poll() != None:
+                            self.status = self.proc.poll()
+                            os.close(self.stdin[0])
+                            os.close(self.stdin[1])
+                            os.close(self.stdout[0])
+                            os.close(self.stdout[1])
+                            return
+            self.Thread_read_proc_text_to_file = threading.Thread(
+                target = read_proc_text_to_file,
+                kwargs = {
+                    'file': os.path.abspath("data/InstanceLog/"+self.instance_id+".log"),
+                    'fd': self.stdout[0],
+                    'fd2': self.stdout2[1],
+                    'self': self
+                }
+            )
+            self.Thread_check_proc_is_running = threading.Thread(
+                target = check_proc_is_running,
+                kwargs = {
+                    'self': self
+                }
+            )
+            self.Thread_read_proc_text_to_file.setDaemon(True)
+            self.Thread_check_proc_is_running.setDaemon(True)
+            self.Thread_read_proc_text_to_file.start()
+            self.Thread_check_proc_is_running.start()

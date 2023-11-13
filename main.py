@@ -69,13 +69,14 @@ def create_instance(name:str,start_cmd:str,stop_cmd:str="stop",instance_dir=None
         "configs": {
             "start_cmd": start_cmd,
             "stop_cmd": stop_cmd,
-            "create_time": int(time.time())
-        }
+            "work_directory": instance_dir
+        },
+        "create_time": int(time.time())
     }
     with open(os.path.abspath("data/InstanceConfig/"+instance_id+".json"),"w") as f:
         f.write(json.dumps(instance_config_template))
     with open(os.path.abspath("data/InstanceLog/"+instance_id+".log"),"w") as f:
-        f.write("欢迎使用TzGamePanel\n此实例已成功创建\n")
+        f.write("实例已成功创建\nPowered by TzGamePanel\n")
     return {
         'status': True,
         'msg': "OK",
@@ -97,7 +98,7 @@ def start_instance(instance_id:str):
                 'status': False,
                 'msg': "启动命令解析失败"
             }
-        start_inst = start_instance(cmd)
+        start_inst = start_instance(cmd,config['work_directory'],instance_id)
     else:
         return {
             'status': False,
