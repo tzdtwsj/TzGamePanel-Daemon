@@ -98,7 +98,7 @@ def start_instance(instance_id:str):
                 'status': False,
                 'msg': "启动命令解析失败"
             }
-        start_inst = start_instance(cmd,config['work_directory'],instance_id)
+        start_inst = startinstance(cmd,config['work_directory'],instance_id)
     else:
         return {
             'status': False,

@@ -38,7 +38,7 @@ def load_cmd_str(cmd:str):
         i = i + 1
     return tmp_cmd_arr
 
-class start_instance:
+class startinstance:
     proc = None #进程类
 
     status = None #进程返回的返回值
