@@ -165,7 +165,7 @@ class instance:
         if not self.is_running():
             return False
         if self.status == 2:
-            return
+            return True
         self.status = 2
         def csis(self,ct):
             while time.time()<ct+300:
@@ -176,6 +176,7 @@ class instance:
         threading.Thread(target=csis,kwargs={'self':self,'ct':time.time()}).start()
         os.write(self.stdout[1], ("[TzGamePanel] 已发送停止命令："+stop_cmd+"，如果停止命令不正确将会无法正常停止\n").encode("utf-8"))
         os.write(self.stdin[1],(stop_cmd+"\n").encode("utf-8"))
+        return True
 
     def kill(self):
         if self.closed: 
