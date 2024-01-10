@@ -28,7 +28,10 @@ instances = []
 tmp_terminal_token = []
 Thread_check_tmp_terminal_token = None
 
-os.chdir(os.path.dirname(__file__)) # 强制更改目录到项目所在目录
+try:
+    os.chdir(os.path.dirname(__file__)) # 强制更改目录到项目所在目录
+except Exception:
+    pass
 from func import *
 
 def ret(status:int,msg:str,data=None):
@@ -148,35 +151,40 @@ def start_instance(instance_id:str):
 def e_400(e):
     return json.dumps({
         'status': 400,
-        'msg': 'Please check if the data you sent to the server is correct.'
+        'msg': 'Please check if the data you sent to the server is correct.',
+        'time': int(time.time())
     })
 
 @app.errorhandler(404)
 def e_404(e):
     return json.dumps({
         'status': 404,
-        'msg': 'Not Found'
+        'msg': 'Not Found',
+        'time': int(time.time())
     })
 
 @app.errorhandler(405)
 def e_405(e):
     return json.dumps({
         'status': 405,
-        'msg': 'Method Not Allowed'
+        'msg': 'Method Not Allowed',
+        'time': int(time.time())
     })
 
 @app.errorhandler(415)
 def e_415(e):
     return json.dumps({
         'status': 415,
-        'msg': 'Did not attempt to load JSON data because the request Content-Type was not \"application/json\".'
+        'msg': 'Did not attempt to load JSON data because the request Content-Type was not \"application/json\".',
+        'time': int(time.time())
     })
 
 @app.errorhandler(500)
 def e_500(e):
     return json.dumps({
         'status': 500,
-        'msg': 'TzGamePanel Daemon has some error. Please check Daemon\'s log.'
+        'msg': 'TzGamePanel Daemon has some error. Please check Daemon\'s log.',
+        'time': int(time.time())
     },indent=4)
 
 @app.route("/")
@@ -270,8 +278,38 @@ def web_stop_instance():
             status = True
             break
     if status:
-        i.stop(get_instance(i.instance_id)['configs']['stop_cmd'])
-        return ret(200,"OK")
+        result = i.stop(get_instance(i.instance_id)['configs']['stop_cmd'])
+        if result:
+            return ret(200,"OK")
+        else:
+            return ret(400,"实例未运行，无法关闭")
+    else:
+        return ret(404,"实例不存在")
+
+@app.route("/kill_instance")
+def web_kill_instance():
+    global instances
+    token = request.args.get("token")
+    if not token:
+        return ret(403,"Permission denied")
+    if not token == config['token']:
+        return ret(403,"Permission denied")
+    instance_id = request.args.get("instance_id")
+    if not instance_id:
+        return ret(400,"Missing parameter")
+    status = False
+    inst = None
+    for i in instances:
+        if i.instance_id == instance_id:
+            inst = i
+            status = True
+            break
+    if status:
+        result = i.kill()
+        if result:
+            return ret(200,"OK")
+        else:
+            return ret(400,"实例未开启，无法杀死")
     else:
         return ret(404,"实例不存在")
 
@@ -285,7 +323,7 @@ def web_send_cmd_to_instance():
         return ret(403,"Permission denied")
     instance_id = request.args.get("instance_id")
     data = request.get_json()
-    if not instance_id or not data.get("command"):
+    if instance_id == None or data.get("command") == None:
         return ret(400,"Missing parameter")
     if type(data.get("command")) != str:
         return ret(400,"\"command\" must is str")
@@ -342,13 +380,23 @@ def gttct():
     return ret( 200, "OK", {'token':token,'instance_id':data.get("instance_id")} )
 
 
+current_connect_count = 0
+current_connect_count_lock = threading.Lock()
 @socketio.on("connect", namespace=name_space)
 def websocket_connect(ws):
-    print("websocket建立连接")
+    global current_connect_count, current_connect_count_lock
+    current_connect_count_lock.acquire()
+    current_connect_count += 1
+    print("websocket建立连接，当前连接数："+str(current_connect_count))
+    current_connect_count_lock.release()
 
 @socketio.on("disconnect", namespace=name_space)
 def websocket_disconnect():
-    print("webscoket断开连接")
+    global current_connect_count, current_connect_count_lock
+    current_connect_count_lock.acquire()
+    current_connect_count -= 1
+    print("webscoket断开连接，当前连接数："+str(current_connect_count))
+    current_connect_count_lock.release()
 
 @socketio.on("terminal", namespace=name_space)
 def websocket_terminal(msg):
@@ -356,7 +404,7 @@ def websocket_terminal(msg):
     if type(msg) != dict:
         emit("result",[False,-1,"Must is type 'dict'(or javascript object)."])
         return
-    token = msg.get("token")
+    token = msg.get("token",None)
     if token == None:
         emit("result",[False,-1,"The parameter \"token\" was not found or it was \"null\"."])
         return
@@ -368,7 +416,7 @@ def websocket_terminal(msg):
             instance_id = i['instance_id']
             break
     if status:
-        emit("result",[True,0,"OK. Please listen event \"terminal\"."])
+        emit("result",[True,0,"OK. Please listen event \"terminal\" and \"instance-status\"."])
     else:
         emit("result",[False,-1,"Permission denied."])
         return
@@ -376,18 +424,14 @@ def websocket_terminal(msg):
 
 def main():
     global sys_type,config,instances
-    print("_____     ____                      ____                  _\n|_   _|___/ ___| __ _ _ __ ___   ___|  _ \\ __ _ _ __   ___| |\n  | ||_  / |  _ / _` | '_ ` _ \\ / _ \\ |_) / _` | '_ \\ / _ \\ |\n  | | / /| |_| | (_| | | | | | |  __/  __/ (_| | | | |  __/ |\n  |_|/___|\\____|\\__,_|_| |_| |_|\\___|_|   \\__,_|_| |_|\\___|_|")
-    print("___\n|   \\ __ _ ___ _ __  ___ _ _\n| |) / _` / -_) '  \\/ _ \\ ' \\\n|___/\\__,_\\___|_|_|_\\___/_||_|")
-    if not os.path.exists("data"):
-        os.mkdir("data")
-    if not os.path.exists("data/configs"):
-        os.mkdir("data/configs")
-    if not os.path.exists("data/InstanceConfig"):
-        os.mkdir("data/InstanceConfig")
-    if not os.path.exists("data/InstanceData"):
-        os.mkdir("data/InstanceData")
-    if not os.path.exists("data/InstanceLog"):
-        os.mkdir("data/InstanceLog")
+    print("  ______      ______                     ____                   __\n /_  __/___  / ____/___ _____ ___  ___  / __ \____ _____  ___  / /\n  / / /_  / / / __/ __ `/ __ `__ \/ _ \/ /_/ / __ `/ __ \/ _ \/ /\n / /   / /_/ /_/ / /_/ / / / / / /  __/ ____/ /_/ / / / /  __/ /\n/_/   /___/\____/\__,_/_/ /_/ /_/\___/_/    \__,_/_/ /_/\___/_/")# TzGamePanel
+    print("    ____\n   / __ \____ ____  ____ ___  ____  ____\n  / / / / __ `/ _ \/ __ `__ \/ __ \/ __ \\\n / /_/ / /_/ /  __/ / / / / / /_/ / / / /\n/_____/\__,_/\___/_/ /_/ /_/\____/_/ /_/")# Daemon
+    for i in ["data","data/configs","data/InstanceConfig","data/InstanceData","data/InstanceLog"]:
+        if not os.path.exists(i):
+            os.mkdir(i)
+        if not os.path.isdir(i):
+            log("为什么你的当前目录中的"+i+"不是目录！给我删了此文件再启动！","FATAL")
+            sys.exit(1)
     token = None
     if not os.path.exists("data/configs/config.json"):
         with open("data/configs/config.json","w") as f:
@@ -395,12 +439,13 @@ def main():
             f.write(json.dumps({
                 'host': '0.0.0.0',
                 'port': 8002,
+                'colorlog': True,
                 'token':token
             },indent=4))
     with open("data/configs/config.json","r") as f:
-        config = f.read()
+        conf = f.read()
     try:
-        config = json.loads(config)
+        config = json.loads(conf)
     except json.decoder.JSONDecodeError as err:
         log(f"在加载配置文件时发生了错误：JSONDecodeError: {err}",loglevel="FATAL")
         log("请尝试删除配置文件data/configs/config.json，然后再启动",loglevel="FATAL")
@@ -418,13 +463,15 @@ def main():
     log("守护进程版本: "+str(VERSION))
     log("此设备的平台："+sys.platform)
     log("此设备的操作系统："+sys_type)
-    log("TzGamePanel开源免费，遵循GPLv3开源许可证，项目地址：https://gitee.com/tzdtwsj/TzGamePanel-Daemon")
+    log("TzGamePanel Daemon开源免费，遵循Apache-2.0开源许可证，项目地址：https://github.com/tzdtwsj/TzGamePanel-Daemon")
     log("加载实例中")
+    num = 0
     for i in get_instances_list():
         instances.append(instance(cmd=load_cmd_str(i['configs']['start_cmd']),cwd=i['configs']['work_directory'],instance_id=i['id']))
-    log("加载实例完成")
-    log(f"TzGamePanel监听在地址{config['host']}，端口{config['port']}")
-    log("此进程的PID是"+str(os.getpid()))
+        num += 1
+    log(f"加载了{num}个实例")
+    log(f"TzGamePanel Daemon监听在地址{config['host']}，端口{config['port']}")
+    log("主进程的PID是"+str(os.getpid()))
     log("退出请按下Ctrl + C")
     socketio.run(app,host=config['host'],port=config['port'])
 

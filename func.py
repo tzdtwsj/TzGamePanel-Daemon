@@ -3,7 +3,10 @@ import os
 import threading
 import time
 import datetime
+import sys
 from __main__ import emit, app
+import __main__
+import traceback
 def load_cmd_str(cmd:str):
     char_arr = list(cmd.strip())
     tmp_cmd_arr = [""]
@@ -41,20 +44,32 @@ def load_cmd_str(cmd:str):
         i = i + 1
     return tmp_cmd_arr
 
-def log(text:str,loglevel:str="INFO"):
+def log(text:str,loglevel:str="INFO",color=None):
+    if color == None:
+        color = __main__.config.get("colorlog",False)
+    if color:
+        info = "\x1b[36m"
+        warn = "\x1b[33m"
+        error = "\x1b[31m"
+        fatal = "\x1b[31m"
+        debug = "\x1b[34m"
+        clear = "\x1b[0m"
+        _time = "\x1b[32m"
+    else:
+        info = warn = error = fatal = debug = clear = _time = ""
     if loglevel == "INFO":
-        loglevel2 = "\x1b[36mINFO\x1b[0m"
+        loglevel2 = info+"INFO"+clear
     elif loglevel == "WARN":
-        loglevel2 = "\x1b[33mWARN\x1b[0m"
+        loglevel2 = warn+"WARN"+clear
     elif loglevel == "ERROR":
-        loglevel2 = "\x1b[31mERROR\x1b[0m"
+        loglevel2 = error+"ERROR"+clear
     elif loglevel == "FATAL":
-        loglevel2 = "\x1b[31mFATAL\x1b[0m"
+        loglevel2 = fatal+"FATAL"+clear
     elif loglevel == "DEBUG":
-        loglevel2 = "\x1b[34mDEBUG\x1b[0m"
+        loglevel2 = debug+"DEBUG"+clear
     else:
         raise ValueError("无效的loglevel: "+loglevel)
-    print("\x1b[0m[\x1b[32m"+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+"\x1b[0m \x1b[33mTzGamePanel\x1b[0m "+loglevel2+"] "+text)
+    print(clear+"["+_time+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+clear+" "+warn+"TzGamePanel "+clear+loglevel2+"] "+text)
 
 class instance:
     cmd = None
@@ -88,9 +103,10 @@ class instance:
                 with open(file,"ab") as f:
                     f.write(text)
                 self.stdout2.append(text)
+                text = text.replace(b'\n',b'\r\n')
                 try:
                     with app.app_context():
-                        emit('terminal', text, to="instance_"+instance_id, namespace="/ws", broadcast=True)
+                        emit('terminal', text, to="instance_"+self.instance_id, namespace="/ws", broadcast=True)
                 except Exception as e:
                     print(str(e))
             
@@ -129,6 +145,7 @@ class instance:
                 os.write(self.stdout[1],(i+" ").encode("utf-8"))
             os.write(self.stdout[1],("\n").encode("utf-8"))
             os.write(self.stdout[1],("  启动时捕获到的异常："+str(e)+"\n").encode("utf-8"))
+            traceback.print_exc()
             return e
         self.status = 1
         def ciir(self):
@@ -137,9 +154,13 @@ class instance:
                 if not self.is_running():
                     self.status = 0
                     os.write(self.stdout[1],("[TzGamePanel] 实例已关闭"+"\n").encode("utf-8"))
+                    with app.app_context():
+                        emit('instance-status', 0, to="instance_"+self.instance_id, namespace="/ws", broadcast=True)
                     return
         threading.Thread(target=ciir,kwargs={'self':self}).start()
         os.write(self.stdout[1],("[TzGamePanel] 实例已启动"+"\n").encode("utf-8"))
+        with app.app_context():
+            emit('instance-status', 1, to="instance_"+self.instance_id, namespace="/ws", broadcast=True)
         return True
 
     def is_running(self):
@@ -159,7 +180,7 @@ class instance:
             return False
         return self.proc.poll()
 
-    def stop(self,stop_cmd:str="stop"):
+    def stop(self,stop_cmd:str="stop",log_to_terminal:bool=True):
         if self.closed: 
             raise Exception("此对象已被关闭")
         if not self.is_running():
@@ -173,9 +194,14 @@ class instance:
                     return
             os.write(self.stdout[1], ("[TzGamePanel] 检测到实例关闭实例时长过长，已自动恢复到运行中状态\n").encode("utf-8"))
             self.status = 1
+            with app.app_context():
+                emit('instance-status', 1, to="instance_"+self.instance_id, namespace="/ws", broadcast=True)
         threading.Thread(target=csis,kwargs={'self':self,'ct':time.time()}).start()
-        os.write(self.stdout[1], ("[TzGamePanel] 已发送停止命令："+stop_cmd+"，如果停止命令不正确将会无法正常停止\n").encode("utf-8"))
+        if log_to_terminal:
+            os.write(self.stdout[1], ("[TzGamePanel] 已发送停止命令："+stop_cmd+"，如果停止命令不正确将会无法正常停止\n").encode("utf-8"))
         os.write(self.stdin[1],(stop_cmd+"\n").encode("utf-8"))
+        with app.app_context():
+            emit('instance-status', 2, to="instance_"+self.instance_id, namespace="/ws", broadcast=True)
         return True
 
     def kill(self):
@@ -195,6 +221,14 @@ class instance:
         os.write(self.stdin[1],b"\n")
         if log_to_terminal == True:
             os.write(self.stdout[1],("[TzGamePanel] 用户执行了命令："+cmd+"\n").encode("utf-8"))
+        return True
+
+    def send_string(self,string:str):#与exec_cmd不同的是，这个结尾没有换行符
+        if self.closed:
+            raise Exception("此对象已被关闭")
+        if self.proc == None or self.proc.poll() != None:
+            return False
+        os.write(self.stdin[1],string.encode("utf-8"))
         return True
 
     def clear_log(self):

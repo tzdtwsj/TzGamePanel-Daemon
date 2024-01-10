@@ -2,4 +2,4 @@ psutil
 flask
 flask_socketio
 python-magic
-eventlet
+gevent
