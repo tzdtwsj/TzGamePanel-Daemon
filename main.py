@@ -12,6 +12,7 @@ import glob
 from subprocess import Popen, PIPE
 import psutil
 import threading
+import traceback
 
 VERSION = "1.0.0"
 sys_type = ""
@@ -278,11 +279,11 @@ def web_stop_instance():
             status = True
             break
     if status:
-        result = i.stop(get_instance(i.instance_id)['configs']['stop_cmd'])
+        result = inst.stop(get_instance(i.instance_id)['configs']['stop_cmd'])
         if result:
             return ret(200,"OK")
         else:
-            return ret(400,"实例未运行，无法关闭")
+            return ret(400,"实例未开启，无法关闭")
     else:
         return ret(404,"实例不存在")
 
@@ -305,7 +306,7 @@ def web_kill_instance():
             status = True
             break
     if status:
-        result = i.kill()
+        result = inst.kill()
         if result:
             return ret(200,"OK")
         else:
@@ -335,7 +336,7 @@ def web_send_cmd_to_instance():
             status = True
             break
     if status:
-        result = i.exec_cmd(data.get("command"),log_to_terminal=data.get("log_to_terminal",True))
+        result = inst.exec_cmd(data.get("command"),log_to_terminal=data.get("log_to_terminal",True))
         if result:
             return ret(200,"OK")
         else:
@@ -422,19 +423,47 @@ def websocket_terminal(msg):
         return
     join_room("instance_"+instance_id,namespace="/ws")
 
+@app.route("/get_file_list")
+def web_get_file_list():
+    global instances
+    token = request.args.get("token")
+    if not token:
+        return ret(403,"Permission denied")
+    if not token == config['token']:
+        return ret(403,"Permission denied")
+    instance_id = request.args.get("instance_id")
+    if not instance_id:
+        return ret(400,"Missing parameter")
+    directory = request.args.get("directory","/")
+    status = False
+    inst = None
+    for i in instances:
+        if i.instance_id == instance_id:
+            inst = i
+            status = True
+            break
+    if status:
+        result = inst.listdir(directory)
+        if result == False:
+            return ret(500,"获取文件列表失败 ("+directory+")")
+        return ret(200,"OK",result)
+    else:
+        return ret(404,"实例不存在")
+
+
 def main():
     global sys_type,config,instances
     print("  ______      ______                     ____                   __\n /_  __/___  / ____/___ _____ ___  ___  / __ \____ _____  ___  / /\n  / / /_  / / / __/ __ `/ __ `__ \/ _ \/ /_/ / __ `/ __ \/ _ \/ /\n / /   / /_/ /_/ / /_/ / / / / / /  __/ ____/ /_/ / / / /  __/ /\n/_/   /___/\____/\__,_/_/ /_/ /_/\___/_/    \__,_/_/ /_/\___/_/")# TzGamePanel
     print("    ____\n   / __ \____ ____  ____ ___  ____  ____\n  / / / / __ `/ _ \/ __ `__ \/ __ \/ __ \\\n / /_/ / /_/ /  __/ / / / / / /_/ / / / /\n/_____/\__,_/\___/_/ /_/ /_/\____/_/ /_/")# Daemon
-    for i in ["data","data/configs","data/InstanceConfig","data/InstanceData","data/InstanceLog"]:
+    for i in ["data","data/Config","data/InstanceConfig","data/InstanceData","data/InstanceLog"]:
         if not os.path.exists(i):
             os.mkdir(i)
         if not os.path.isdir(i):
             log("为什么你的当前目录中的"+i+"不是目录！给我删了此文件再启动！","FATAL")
             sys.exit(1)
     token = None
-    if not os.path.exists("data/configs/config.json"):
-        with open("data/configs/config.json","w") as f:
+    if not os.path.exists("data/Config/config.json"):
+        with open("data/Config/config.json","w") as f:
             token = hashlib.md5(string=str(str(time.time())+"TzGamePanel Key").encode("utf-8")).hexdigest()
             f.write(json.dumps({
                 'host': '0.0.0.0',
@@ -442,13 +471,13 @@ def main():
                 'colorlog': True,
                 'token':token
             },indent=4))
-    with open("data/configs/config.json","r") as f:
+    with open("data/Config/config.json","r") as f:
         conf = f.read()
     try:
         config = json.loads(conf)
     except json.decoder.JSONDecodeError as err:
         log(f"在加载配置文件时发生了错误：JSONDecodeError: {err}",loglevel="FATAL")
-        log("请尝试删除配置文件data/configs/config.json，然后再启动",loglevel="FATAL")
+        log("请尝试删除配置文件data/Config/config.json，然后再启动",loglevel="FATAL")
         sys.exit(1)
     if token != None:
         log("第一次启动，已生成token: "+token)
@@ -483,3 +512,6 @@ if __name__ == '__main__':
         for i in instances:
             i.kill()
         sys.exit(0)
+    except Exception as e:
+        log("发生了错误："+str(e),loglevel="ERROR")
+        traceback.print_exc()

@@ -245,5 +245,19 @@ class instance:
         for i in [self.stdin[0],self.stdin[1],self.stdout[0],self.stdout[1]]:
             os.close(i)
 
+    def listdir(self,directory:str="/"):
+        try:
+            files = os.listdir(os.path.abspath(self.cwd+"/"+directory))
+        except Exception:
+            return False
+        files2 = []
+        for i in files:
+            mode = oct(os.stat(os.path.abspath(self.cwd+"/"+directory+"/"+i)).st_mode & 0o777)[2:]
+            if os.path.isdir(os.path.abspath(self.cwd+"/"+directory+"/"+i)):
+                files2.append({'name':i,'type':"d","mode":mode,"size":None})
+            else:
+                files2.append({'name':i,'type':"f","mode":mode,"size":os.path.getsize(os.path.abspath(self.cwd+"/"+directory+"/"+i))})
+        return files2
+
 if __name__ == "__main__":
     print("不要直接执行此文件！你需要执行TzGamePanel的main.py进行使用")
