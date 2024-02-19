@@ -71,13 +71,25 @@ def log(text:str,loglevel:str="INFO",color=None):
         raise ValueError("无效的loglevel: "+loglevel)
     print(clear+"["+_time+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+clear+" "+warn+"TzGamePanel "+clear+loglevel2+"] "+text)
 
+def load_dir(directory):
+    dir2 = directory.split("/")
+    dir3 = ""
+    for i in dir2:
+        if i == "":
+            continue
+        dir3 += "/"+i
+    if dir3 == "":
+        return "/"
+    else:
+        return dir3
+
 class instance:
     cmd = None
     cwd = None
     proc = None #进程类
     stdin = None #管道
     stdout = None #管道
-    stdout2 = []
+    stdout2 = None
     instance_id = None #实例id
     Thread_read_proc_text_to_file = None
     closed = False
@@ -87,13 +99,14 @@ class instance:
         if self.closed:
             raise Exception("此对象已被关闭")
         if type(cmd) != list:
-            raise TypeError(f"cmd should be list, not {type(cmd)}")
+            raise TypeError(f"cmd should be list, not {type(cmd.__name__)}")
         self.stdin = os.pipe()#os.pipe返回的是元组，元组的返回的第一个fd是读，第二个fd是写
         self.stdout = os.pipe()
         #self.stderr = os.pipe()
         self.cmd = cmd
         self.cwd = cwd
         self.instance_id = instance_id
+        self.stdout2 = []
         def read_proc_text_to_file(file,fd,self):
             while True:
                 try:
@@ -258,6 +271,12 @@ class instance:
             else:
                 files2.append({'name':i,'type':"f","mode":mode,"size":os.path.getsize(os.path.abspath(self.cwd+"/"+directory+"/"+i))})
         return files2
+
+    def get_last_log(self,line:int=50):
+        string = ""
+        for i in self.stdout2[0-line:]:
+            string += i.decode("utf-8")
+        return string
 
 if __name__ == "__main__":
     print("不要直接执行此文件！你需要执行TzGamePanel的main.py进行使用")

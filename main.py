@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-# from flask import Flask
 import json
 import sys
 import os
 import platform
-from flask import Flask, request, make_response, abort
+from flask import Flask, request, make_response, abort, send_file
 from flask_socketio import SocketIO, emit, join_room
 import hashlib
 import time
@@ -449,6 +448,73 @@ def web_get_file_list():
         return ret(200,"OK",result)
     else:
         return ret(404,"实例不存在")
+
+@app.route("/get_last_log")
+def web_get_last_log():
+    global instances
+    token = request.args.get("token")
+    if not token:
+        return ret(403,"Permission denied")
+    if not token == config['token']:
+        return ret(403,"Permission denied")
+    instance_id = request.args.get("instance_id")
+    if not instance_id:
+        return ret(400,"Missing parameter")
+    line = int(request.args.get("line",50))
+    status = False
+    inst = None
+    for i in instances:
+        if i.instance_id == instance_id:
+            inst = i
+            status = True
+            break
+    if status:
+        result = inst.get_last_log(line)
+        if result == False:
+            return ret(500,"获取实例日志失败")
+        return ret(200,"OK",result)
+    else:
+        return ret(404,"实例不存在")
+
+@app.route("/get_download_file_key")
+def web_get_download_file_key():
+    global instances
+    token = request.args.get("token")
+    if not token:
+        return ret(403,"Permission denied")
+    if not token == config['token']:
+        return ret(403,"Permission denied")
+    instance_id = request.args.get("instance_id")
+    if not instance_id:
+        return ret(400,"Missing parameter")
+    file = request.args.get("file",None)
+    if file == None:
+        return ret(400,"Missing parameter")
+    status = False
+    inst = None
+    for i in instances:
+        if i.instance_id == instance_id:
+            inst = i
+            status = True
+            break
+    if status:
+        result = inst.listdir(os.path.dirname(file))
+        if result == False:
+            return ret(500,"目录不存在")
+        for i in result:
+            if i.name == os.path.basename(file):
+                if i.type == "f":
+                    key = hashlib.md5(str(str(time.time())+"TzGamePanel Key for download_file").encode("utf-8")).hexdigest()
+                    return ret(200,"OK",key)
+                if i.type == "d":
+                    return ret(400,"无法为文件夹生成下载密钥")
+        return ret(400,"文件不存在")
+    else:
+        return ret(404,"实例不存在")
+
+@app.route("/download_file")
+def web_download_file():
+    ...
 
 
 def main():
