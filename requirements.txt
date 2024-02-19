@@ -3,3 +3,4 @@ flask
 flask_socketio
 python-magic
 gevent
+gevent-websocket
