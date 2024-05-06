@@ -26,6 +26,7 @@ name_space = '/ws'
 instances = []
 
 tmp_terminal_token = []
+#tmp_download_key = []
 Thread_check_tmp_terminal_token = None
 
 try:
@@ -185,11 +186,11 @@ def e_500(e):
         'status': 500,
         'msg': 'TzGamePanel Daemon has some error. Please check Daemon\'s log.',
         'time': int(time.time())
-    },indent=4)
+    },indent=4)+"\n"
 
 @app.route("/")
 def daemon_is_ok():
-    return "TzGamePanel Daemon is OK. Time: "+str(int(time.time()))
+    return "TzGamePanel Daemon is OK. Time: "+str(int(time.time()))+"\n"
 
 @app.route("/get_info", methods=["GET"])
 def get_info():
@@ -387,7 +388,7 @@ def websocket_connect(ws):
     global current_connect_count, current_connect_count_lock
     current_connect_count_lock.acquire()
     current_connect_count += 1
-    print("websocket建立连接，当前连接数："+str(current_connect_count))
+    log("websocket建立连接，当前连接数："+str(current_connect_count),"DEBUG")
     current_connect_count_lock.release()
 
 @socketio.on("disconnect", namespace=name_space)
@@ -395,7 +396,7 @@ def websocket_disconnect():
     global current_connect_count, current_connect_count_lock
     current_connect_count_lock.acquire()
     current_connect_count -= 1
-    print("webscoket断开连接，当前连接数："+str(current_connect_count))
+    log("webscoket断开连接，当前连接数："+str(current_connect_count),"DEBUG")
     current_connect_count_lock.release()
 
 @socketio.on("terminal", namespace=name_space)
@@ -476,46 +477,77 @@ def web_get_last_log():
     else:
         return ret(404,"实例不存在")
 
-@app.route("/get_download_file_key")
-def web_get_download_file_key():
-    global instances
-    token = request.args.get("token")
+@app.route("/download_file")
+def web_download_file():
+    global tmp_terminal_token
+    token = request.args.get("terminal_token")
     if not token:
         return ret(403,"Permission denied")
-    if not token == config['token']:
+    status = False
+    for i in tmp_terminal_token:
+        if i['token'] == token:
+            instance_id = i['instance_id']
+            status = True
+            break
+    if not status:
         return ret(403,"Permission denied")
-    instance_id = request.args.get("instance_id")
-    if not instance_id:
-        return ret(400,"Missing parameter")
     file = request.args.get("file",None)
     if file == None:
         return ret(400,"Missing parameter")
-    status = False
     inst = None
     for i in instances:
         if i.instance_id == instance_id:
             inst = i
+    if inst == None:
+        return ret(400,"实例不存在;Instance not found.")
+    result = inst.listdir(os.path.dirname(file))
+    if result == False:
+        return ret(404,"文件路径不存在;File not found.")
+    for i in result:
+        if i.get("name") == os.path.basename(file):
+            if i.get("type") == "d":
+                return ret(400,"无法下载，该路径为文件夹;This is a directory.")
+            else:
+                return send_file(load_dir(inst.cwd+"/"+file),as_attachment=True,download_name=os.path.basename(file))
+    return ret(404,"文件路径不存在;File not found.")
+
+@app.route("/upload_file",methods=["POST"])
+def web_upload_file():
+    global tmp_terminal_token
+    token = request.args.get("terminal_token")
+    if not token:
+        return ret(403,"Permission denied")
+    status = False
+    for i in tmp_terminal_token:
+        if i['token'] == token:
+            instance_id = i['instance_id']
             status = True
             break
-    if status:
-        result = inst.listdir(os.path.dirname(file))
-        if result == False:
-            return ret(500,"目录不存在")
-        for i in result:
-            if i.name == os.path.basename(file):
-                if i.type == "f":
-                    key = hashlib.md5(str(str(time.time())+"TzGamePanel Key for download_file").encode("utf-8")).hexdigest()
-                    return ret(200,"OK",key)
-                if i.type == "d":
-                    return ret(400,"无法为文件夹生成下载密钥")
-        return ret(400,"文件不存在")
-    else:
-        return ret(404,"实例不存在")
-
-@app.route("/download_file")
-def web_download_file():
-    ...
-
+    if not status:
+        return ret(403,"Permission denied")
+    filename = request.args.get("file",None)
+    if filename == None:
+        return ret(400,"Missing parameter")
+    inst = None
+    for i in instances:
+        if i.instance_id == instance_id:
+            inst = i
+    if inst == None:
+        return ret(400,"实例不存在;Instance not found.")
+    result = inst.listdir(os.path.dirname(filename))
+    if result == False:
+        return ret(404,"文件路径不存在;File not found.")
+    for i in result:
+        if i.get("name") == os.path.basename(filename):
+            if i.get("type") == "d":
+                return ret(400,"无法上传，该路径为文件夹;This is a directory.")
+            else:
+                return ret(400,"文件已存在;File is exist.")
+    file = request.files.get("file")
+    if file == None:
+        return ret(400,"未上传文件;File not upload.")
+    file.save(load_dir(inst.cwd+"/"+filename))
+    return ret(200,"OK")
 
 def main():
     global sys_type,config,instances
@@ -544,6 +576,43 @@ def main():
     except json.decoder.JSONDecodeError as err:
         log(f"在加载配置文件时发生了错误：JSONDecodeError: {err}",loglevel="FATAL")
         log("请尝试删除配置文件data/Config/config.json，然后再启动",loglevel="FATAL")
+        sys.exit(1)
+    if token != None:
+        log("第一次启动，已生成token: "+token)
+    if sys.platform.startswith("linux"):
+        sys_type = "Linux"
+    elif sys.platform.startswith("win"):
+        sys_type = "Windows"
+    else:
+        log("不支持你的操作系统！",loglevel="ERROR")
+        log(f"sys.platform = {platform}",loglevel="ERROR")
+        sys.exit(1)
+    log("守护进程版本: "+str(VERSION))
+    log("此设备的平台："+sys.platform)
+    log("此设备的操作系统："+sys_type)
+    log("TzGamePanel Daemon开源免费，遵循Apache-2.0开源许可证，项目地址：https://github.com/tzdtwsj/TzGamePanel-Daemon")
+    log("加载实例中")
+    num = 0
+    for i in get_instances_list():
+        instances.append(instance(cmd=load_cmd_str(i['configs']['start_cmd']),cwd=i['configs']['work_directory'],instance_id=i['id']))
+        num += 1
+    log(f"加载了{num}个实例")
+    log(f"TzGamePanel Daemon监听在地址{config['host']}，端口{config['port']}")
+    log("主进程的PID是"+str(os.getpid()))
+    log("退出请按下Ctrl + C")
+    socketio.run(app,host=config['host'],port=config['port'])
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        log("正在退出")
+        for i in instances:
+            i.kill()
+        sys.exit(0)
+    except Exception as e:
+        log("发生了错误："+str(e),loglevel="ERROR")
+        traceback.print_exc()
         sys.exit(1)
     if token != None:
         log("第一次启动，已生成token: "+token)
