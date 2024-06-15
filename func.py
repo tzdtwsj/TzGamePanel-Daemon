@@ -7,6 +7,7 @@ import sys
 from __main__ import emit, app
 import __main__
 import traceback
+import psutil
 def load_cmd_str(cmd:str):
     char_arr = list(cmd.strip())
     tmp_cmd_arr = [""]
@@ -95,11 +96,13 @@ class instance:
     closed = False
     status = 0 #关于status的解释：0-已关闭，1-运行中，2-关闭中
 
+    thread_lock = threading.Lock()
+
     def __init__(self,cmd:list,cwd:str,instance_id:str):
         if self.closed:
             raise Exception("此对象已被关闭")
         if type(cmd) != list:
-            raise TypeError(f"cmd should be list, not {type(cmd.__name__)}")
+            raise TypeError(f"cmd should be list, not {type(cmd).__name__}")
         self.stdin = os.pipe()#os.pipe返回的是元组，元组的返回的第一个fd是读，第二个fd是写
         self.stdout = os.pipe()
         #self.stderr = os.pipe()
@@ -107,15 +110,24 @@ class instance:
         self.cwd = cwd
         self.instance_id = instance_id
         self.stdout2 = []
+        self.__clean_log_file(os.path.abspath("data/InstanceLog/"+self.instance_id+".log"))
+        if os.path.exists(os.path.abspath("data/InstanceLog/"+self.instance_id+".log")):
+                with open(os.path.abspath("data/InstanceLog/"+self.instance_id+".log"),"rb") as f:
+                    if os.path.getsize(os.path.abspath("data/InstanceLog/"+self.instance_id+".log")) > 1024**2:
+                        f.seek(-1*(1024**2),2)
+                    self.stdout2.append(f.read(1024**2))
         def read_proc_text_to_file(file,fd,self):
             while True:
                 try:
                     text = os.read(fd,256000)
                 except Exception as e:
                     return
+                self.thread_lock.acquire()
                 with open(file,"ab") as f:
                     f.write(text)
+                self.stdout2 = self.stdout2[:500]
                 self.stdout2.append(text)
+                self.thread_lock.release()
                 text = text.replace(b'\n',b'\r\n')
                 try:
                     with app.app_context():
@@ -140,15 +152,16 @@ class instance:
         if self.proc != None:
             if self.proc.poll() == None:
                 return False
+        self.__clean_log_file(os.path.abspath("data/InstanceLog/"+self.instance_id+".log"))
         try:
             if os.path.isdir(self.cmd[0]):
                 raise Exception(f"{self.cmd[0]}: 是一个目录")
             self.proc = Popen(
-                args = self.cmd,#命令参数
-                shell = False,#是否由shell带动此进程
-                stdin = self.stdin[0],#标准输入
-                stdout = self.stdout[1],#标准输出
-                stderr = self.stdout[1],#标准错误输出
+                args = self.cmd,         # 命令参数
+                shell = False,           # 是否由shell带动此进程
+                stdin = self.stdin[0],   # 标准输入
+                stdout = self.stdout[1], # 标准输出
+                stderr = self.stdout[1], # 标准错误输出
                 cwd = self.cwd
             )
         except Exception as e:
@@ -166,6 +179,7 @@ class instance:
                 time.sleep(1)
                 if not self.is_running():
                     self.status = 0
+                    log("实例 "+__main__.get_instance(self.instance_id).get("name")+"["+self.instance_id+"] 已关闭")
                     os.write(self.stdout[1],("[TzGamePanel] 实例已关闭"+"\n").encode("utf-8"))
                     with app.app_context():
                         emit('instance-status', 0, to="instance_"+self.instance_id, namespace="/ws", broadcast=True)
@@ -222,6 +236,13 @@ class instance:
             raise Exception("此对象已被关闭")
         if not self.is_running():
             return False
+        proc = psutil.Process(self.proc.pid)
+        try:
+            proc_children = proc.children(recursive=True)
+            for i in proc_children:
+                os.kill(i.pid,9)
+        except Exception as e:
+            traceback.print_exc()
         self.proc.kill()
         return True
 
@@ -245,9 +266,11 @@ class instance:
         return True
 
     def clear_log(self):
+        self.thread_lock.acquire()
         with open(os.path.abspath("data/InstanceLog/"+self.instance_id+".log"),"w") as f:
             f.write("")
         self.stdout2 = []
+        self.thread_lock.release()
 
     def close(self):
         if self.closed:
@@ -274,9 +297,24 @@ class instance:
 
     def get_last_log(self,line:int=50):
         string = ""
+        self.thread_lock.acquire()
         for i in self.stdout2[0-line:]:
             string += i.decode("utf-8")
+        self.thread_lock.release()
         return string
+
+    def __clean_log_file(self,file):
+        if not os.path.exists(os.path.abspath("data/InstanceLog/"+self.instance_id+".log")):
+            return
+        self.thread_lock.acquire()
+        text = ""
+        if os.path.getsize(os.path.abspath("data/InstanceLog/"+self.instance_id+".log")) > 1024**2:
+            with open(file,"rb") as f:
+                f.seek(-1*(1024**2),2)
+                text = f.read(1024**2) # 1MiB
+            with open(file,"wb") as f:
+                f.write(text)
+        self.thread_lock.release()
 
 if __name__ == "__main__":
     print("不要直接执行此文件！你需要执行TzGamePanel的main.py进行使用")

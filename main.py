@@ -8,10 +8,11 @@ from flask_socketio import SocketIO, emit, join_room
 import hashlib
 import time
 import glob
-from subprocess import Popen, PIPE
+#from subprocess import Popen, PIPE
 import psutil
 import threading
 import traceback
+import signal
 
 VERSION = "1.0.0"
 sys_type = ""
@@ -19,7 +20,7 @@ config = {}
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret_key'
-socketio = SocketIO(app, cors_allowed_origins='*')
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode="threading")
 
 name_space = '/ws'
 
@@ -36,7 +37,10 @@ except Exception:
 from func import *
 
 def ret(status:int,msg:str,data=None):
-    return json.dumps({'status':status,'msg':msg,'data':data,'time':int(time.time())}), status
+    response = make_response(json.dumps({'status':status,'msg':msg,'data':data,'time':int(time.time())})+"\n", status)
+    response.headers["Content-Type"] = "application/json; charset=utf-8"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 def info():
     global sys_type,VERSION
@@ -128,6 +132,7 @@ def start_instance(instance_id:str):
     if status:
         result = inst.start()
         if result == True:
+            log("实例 "+get_instance(inst.instance_id).get("name")+"["+inst.instance_id+"] 被启动")
             return {
                 'status': True,
                 'msg': "OK"
@@ -281,6 +286,7 @@ def web_stop_instance():
     if status:
         result = inst.stop(get_instance(i.instance_id)['configs']['stop_cmd'])
         if result:
+            log("实例 "+get_instance(inst.instance_id).get("name")+"["+inst.instance_id+"] 被发送了关闭请求")
             return ret(200,"OK")
         else:
             return ret(400,"实例未开启，无法关闭")
@@ -308,9 +314,10 @@ def web_kill_instance():
     if status:
         result = inst.kill()
         if result:
+            log("实例 "+get_instance(inst.instance_id).get("name")+"["+inst.instance_id+"] 被强制停止")
             return ret(200,"OK")
         else:
-            return ret(400,"实例未开启，无法杀死")
+            return ret(400,"实例未开启，无法强制停止")
     else:
         return ret(404,"实例不存在")
 
@@ -513,8 +520,9 @@ def web_download_file():
 
 @app.route("/upload_file",methods=["POST"])
 def web_upload_file():
+    log("POST /upload_file","DEBUG")
     global tmp_terminal_token
-    token = request.args.get("terminal_token")
+    token = request.args.get("terminal_token") or request.form.get("terminal_token")
     if not token:
         return ret(403,"Permission denied")
     status = False
@@ -525,7 +533,7 @@ def web_upload_file():
             break
     if not status:
         return ret(403,"Permission denied")
-    filename = request.args.get("file",None)
+    filename = request.args.get("filename",None) or request.form.get("filename")
     if filename == None:
         return ret(400,"Missing parameter")
     inst = None
@@ -601,8 +609,21 @@ def main():
     log("主进程的PID是"+str(os.getpid()))
     log("退出请按下Ctrl + C")
     socketio.run(app,host=config['host'],port=config['port'])
+    #server = pywsgi.WSGIServer((config['host'],config['port']),app)
+    #server.serve_forever()
 
 if __name__ == '__main__':
+    def signal_sigint(*a):
+        print("")
+        log("正在退出")
+        for i in instances:
+            i.kill()
+        sys.exit(0)
+    signal.signal(signal.SIGINT,signal_sigint)
+    signal.signal(signal.SIGTERM,signal_sigint)
+    signal.signal(signal.SIGQUIT,signal_sigint)
+    main()
+    """
     try:
         main()
     except KeyboardInterrupt:
@@ -613,40 +634,4 @@ if __name__ == '__main__':
     except Exception as e:
         log("发生了错误："+str(e),loglevel="ERROR")
         traceback.print_exc()
-        sys.exit(1)
-    if token != None:
-        log("第一次启动，已生成token: "+token)
-    if sys.platform.startswith("linux"):
-        sys_type = "Linux"
-    elif sys.platform.startswith("win"):
-        sys_type = "Windows"
-    else:
-        log("不支持你的操作系统！",loglevel="ERROR")
-        log(f"sys.platform = {platform}",loglevel="ERROR")
-        sys.exit(1)
-    log("守护进程版本: "+str(VERSION))
-    log("此设备的平台："+sys.platform)
-    log("此设备的操作系统："+sys_type)
-    log("TzGamePanel Daemon开源免费，遵循Apache-2.0开源许可证，项目地址：https://github.com/tzdtwsj/TzGamePanel-Daemon")
-    log("加载实例中")
-    num = 0
-    for i in get_instances_list():
-        instances.append(instance(cmd=load_cmd_str(i['configs']['start_cmd']),cwd=i['configs']['work_directory'],instance_id=i['id']))
-        num += 1
-    log(f"加载了{num}个实例")
-    log(f"TzGamePanel Daemon监听在地址{config['host']}，端口{config['port']}")
-    log("主进程的PID是"+str(os.getpid()))
-    log("退出请按下Ctrl + C")
-    socketio.run(app,host=config['host'],port=config['port'])
-
-if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        log("正在退出")
-        for i in instances:
-            i.kill()
-        sys.exit(0)
-    except Exception as e:
-        log("发生了错误："+str(e),loglevel="ERROR")
-        traceback.print_exc()
+    """
